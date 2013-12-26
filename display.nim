@@ -34,6 +34,17 @@ proc newGLBuffer*[T](data: var seq[T], target:GLenum=GL_ARRAY_BUFFER, usage:GLen
   withBuffer(result, target):
     glBufferData(target, GLsizeiptr(sizeof(T)*len(data)), cast[PGLvoid](addr(data[0])), usage)
 
+type GLVAO* = distinct GLuint
+proc destruct*(b: var GLVAO) = glDeleteVertexArrays(1, PGLuint(b.addr))
+proc newGLVAO*(): GLVAO =
+  var rr:GLuint
+  glGenVertexArrays(1, rr.addr)
+  result = GLVAO(rr)
+template withVAO*(vao: expr, body:stmt):stmt {.immediate.} =
+    glBindVertexArray(GLuint(vao))
+    body
+    glBindVertexArray(0)
+
 
 type GLshader* = distinct GLhandle
 
@@ -54,7 +65,12 @@ proc newShader*(shaderType: GLenum, shader_source: cstring): GLshader =
       log:string = newString(loglength)
       length:GLint=0
     glGetShaderInfoLog(GLHandle(result), loglength, length, log)
-    raise newException(ESystem, "Could not compile shader: "&log)
+    var shadtype:string
+    case int(shaderType):
+      of GL_VERTEX_SHADER: shadtype="vertex "
+      of GL_FRAGMENT_SHADER: shadtype="fragment "
+      else: shadtype=""
+    raise newException(ESystem, "Could not compile "&shadtype &"shader: "&log)
 
 
 type GLprogram* = distinct GLHandle
@@ -70,6 +86,9 @@ template withProgram*(program: expr, body:stmt): stmt {.immediate.} =
     glUseProgram(0)
 
 proc compileProgram*(vertex_shader="",fragment_shader=""): GLprogram =
+  # Compile a vertex shader source and a fragment shader source into a
+  # GLshader. You can bind it with withProgram, but please use
+  # destruct() when you are finished!
   var shaders: seq[GLshader] = @[]
   if vertex_shader != "":
     shaders.add(newShader(GL_VERTEX_SHADER, vertex_shader))
@@ -93,6 +112,10 @@ proc compileProgram*(vertex_shader="",fragment_shader=""): GLprogram =
   for shader in shaders:
     glDetachShader(GLHandle(result), GLHandle(shader))
     destruct(shader)
+proc uniform*(program: GLProgram, uniform: string): GLint =
+  return glGetUniformLocation(GLHandle(program), uniform)
+proc attrib*(program: GLProgram, attrib: string): GLuint =
+  return GLuint(glGetAttribLocation(GLHandle(program), attrib))
 
 
 
@@ -104,3 +127,19 @@ proc displayloop*(window: ptr TGLFWWindow, body: proc(width,height:cint)) =
       glfwSwapBuffers(window)
       glfwPollEvents()
     glfwTerminate()
+
+
+
+type Tvec4* = tuple[x:float32,y:float32,z:float32,w:float32]
+type Tmat4x4* = array[0..15, float32]
+type Tmat4x3* = array[0..11, float32]
+
+proc glGetUniformLocation*(pgm:GLprogram, what:string): glint =
+  return glGetUniformLocation(GLHandle(pgm), what)
+
+proc setUniform*(location: GLint, what: var TMat4x4) =
+    # opengl matrices are in column order
+    glUniformMatrix4fv(location, 1, GLboolean(GL_TRUE), what[0].addr)
+proc setUniform*(location: GLint, what: var TMat4x3) =
+    # opengl matrices are in column order, and the call signature is too
+    glUniformMatrix3x4fv(location, 1, GLboolean(GL_TRUE), what[0].addr)
